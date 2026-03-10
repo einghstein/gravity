@@ -10,27 +10,35 @@ pygame.display.set_caption("Gravity Sim")
 clock = pygame.time.Clock()
 font = pygame.font.SysFont("Arial", 18)
 
-sim_scale = 4.371363744640307e-09
-steps_per_frame = 100000
+sim_scale = 5e-9  # slightly adjusted scale
+steps_per_frame = 10000  # fewer steps per frame for smoother simulation
 offset = [0, -HEIGHT // 2]
 scale_scaling_factor = 1.1
 
 G = 6.67430e-11
-title = 0
+class TitleGenerator:
+    def __init__(self):
+        self.current = 0
 
+    def next(self):
+        title = f"Planet {self.current}"
+        self.current += 1
+        return title
+title_generator = TitleGenerator()
 
 class Planet:
-    def __init__(self, position, radius, mass, color, title=str(title)):
+    def __init__(self, position, radius, mass, color, title=str(title_generator.next())):
         self.x, self.y = position
         if title == "Earth":
-            self.vx, self.vy = 0, 29780
+            self.vx, self.vy = 0, 29780  # Earth's orbital speed
+        elif title == "Moon":
+            self.vx, self.vy = 1022, 29780  # Moon's speed relative to Earth
         else:
             self.vx, self.vy = 0, 0
         self.radius = radius
         self.mass = mass
         self.color = color
         self.title = title
-        title += 1
 
     def draw(self, surface, offset, radial_scale=1):
         sx = int(self.x * sim_scale) - offset[0]
@@ -67,7 +75,8 @@ class Planet:
 
 planets = [
     Planet((0, 0), 696340000, 1.989e30, (255,255,0), "Sun"),      # Sun
-    Planet((149600000000, 0), 1737000, 5.972e24, (0,100,255), "Earth") # Earth
+    Planet((149600000000, 0), 6371000, 5.972e24, (0,100,255), "Earth"), # Earth radius fixed
+    Planet((149600000000, 384400000), 1737000, 7.34767309e22, (200,200,200), "Moon") # Moon
 ]
 
 running = True
@@ -116,6 +125,8 @@ while running:
     for planet in planets:
         if planet.title == "Earth":
             planet.draw(screen, offset, radial_scale=1000)
+        elif planet.title == "Moon":
+            planet.draw(screen, offset, radial_scale=500)
         else:
             planet.draw(screen, offset, radial_scale=10)
 
