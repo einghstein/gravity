@@ -31,7 +31,6 @@ sim_radius_multiplier = 0.00001
 sim_move_speed = 10000000
 key_cooldown = 0
 
-begin_offset = [WIDTH // 2, HEIGHT // 2]
 
 #temporary planet for testing
 moon_begin_speed = [0, 66900]
@@ -44,9 +43,10 @@ class Planet:
         self.mass = mass
         self.color = color
         self.acceleration = [0, 0]
+        self.toggled = False
 
     def draw(self, surface):
-        pygame.draw.circle(surface, self.color, (self.position[0] * sim_space_multiplier + begin_offset[0], self.position[1] * sim_space_multiplier + begin_offset[1]), self.radius * sim_radius_multiplier)
+        pygame.draw.circle(surface, self.color, (self.position[0] * sim_space_multiplier, self.position[1] * sim_space_multiplier), self.radius * sim_radius_multiplier)
         print(f"Drawing planet at scaled position: ({self.position[0] * sim_space_multiplier}, {self.position[1] * sim_space_multiplier}) with scaled radius: {self.radius * sim_radius_multiplier}")
 
     def update(self,  dt):
@@ -108,9 +108,17 @@ def update(dt):
             planet.position[1] -= sim_move_speed  # Move down
 
     screen.fill(BG_COLOR)
+    mouse_pos = pygame.mouse.get_pos() / sim_space_multiplier
     for planet in planets:
         for _ in range(sim_speed):
             planet.update(dt)
+            if (math.hypot(planet.position[0] - mouse_pos[0], planet.position[1] - mouse_pos[1]) < planet.radius):
+                print(f"Mouse is over planet at position: {planet.position}")
+                planet.toggled = True
+                planet.acceleration = [0, 0]
+                planet.speed = [0, 0]
+            else:
+                planet.toggled = False
         planet.draw(screen)
     pygame.display.flip()
 

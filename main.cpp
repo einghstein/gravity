@@ -1,112 +1,185 @@
-#include <stdlib.h>
-
-#include <iostream>
-#include <vector>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
 #include <cmath>
+#include <vector>
+#include <string>
+#include <iostream>
 
-// SFML support removed — console-only simulator
+const int WIDTH = 800;
+const int HEIGHT = 600;
 
-// Gravitational constant (tunable for simulation scale)
-const double G = 66.743; // current workspace value
+double sim_scale = 4.371363744640307e-09;
+const int steps_per_frame = 100000;
+int offset_x = 0;
+int offset_y = -HEIGHT / 2;
+const double scale_scaling_factor = 1.1;
 
-// Softening parameter to avoid singularity at very small separations
-const double SOFTENING = 1e-3;
+const double G = 6.67430e-11;
 
-struct Vector2 {
-	double x;
-	double y;
+struct Planet {
+    double x, y;
+    double vx, vy;
+    double radius;
+    double mass;
+    SDL_Color color;
+    std::string title;
 
-	Vector2() : x(0), y(0) {}
-	Vector2(double x, double y) : x(x), y(y) {}
+    Planet(double px, double py, double r, double m, SDL_Color c, std::string t)
+        : x(px), y(py), radius(r), mass(m), color(c), title(t) 
+    {
+        if (title == "Earth") {
+            vx = 0;
+            vy = 29780;
+        } else {
+            vx = vy = 0;
+        }
+    }
 
-	Vector2 operator+(const Vector2& o) const { return Vector2(x + o.x, y + o.y); }
-	Vector2 operator-(const Vector2& o) const { return Vector2(x - o.x, y - o.y); }
-	Vector2 operator*(double s) const { return Vector2(x * s, y * s); }
-	Vector2& operator+=(const Vector2& o) { x += o.x; y += o.y; return *this; }
-	double length() const { return std::sqrt(x*x + y*y); }
-};
+    void draw(SDL_Renderer* renderer, int offset_x, int offset_y, double radial_scale=1) {
+        int sx = static_cast<int>(x * sim_scale) - offset_x;
+        int sy = static_cast<int>(y * sim_scale) - offset_y;
+        int r = std::max(static_cast<int>(radius * sim_scale * radial_scale), 1);
 
-class Body {
-public:
-	double x;
-	double y;
-	double vx;
-	double vy;
-	double radius;
-	double mass;
-	double density;
-	// accumulated force
-	Vector2 force;
+        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, 255);
+        for(int w = 0; w < r*2; ++w) {
+            for(int h = 0; h < r*2; ++h) {
+                int dx = r - w;
+                int dy = r - h;
+                if (dx*dx + dy*dy <= r*r) {
+                    SDL_RenderDrawPoint(renderer, sx + dx, sy + dy);
+                }
+            }
+        }
 
-	Body(double x=0, double y=0, double radius=0, double mass=0, double density=0)
-		: x(x), y(y), vx(0), vy(0), radius(radius), mass(mass), density(density), force() {}
+        if (radial_scale != 1) {
+            int inner_r = std::max(static_cast<int>(r / radial_scale), 1);
+            SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+            for(int w = 0; w < inner_r*2; ++w) {
+                for(int h = 0; h < inner_r*2; ++h) {
+                    int dx = inner_r - w;
+                    int dy = inner_r - h;
+                    if (dx*dx + dy*dy <= inner_r*inner_r) {
+                        SDL_RenderDrawPoint(renderer, sx + dx, sy + dy);
+                    }
+                }
+            }
+        }
+    }
 
-	// Compute gravitational force vector exerted on this body by `other`.
-	// Returns the force vector (Fx, Fy). Uses Newton's law: F = G * m1 * m2 / (r^2 + eps^2)
-	Vector2 update(const Body& other) const {
-		Vector2 dir(other.x - x, other.y - y);
-		double r2 = dir.x*dir.x + dir.y*dir.y + SOFTENING*SOFTENING;
-		double r = std::sqrt(r2);
-		if (r <= 0.0) return Vector2(0,0);
-		double forceMag = G * mass * other.mass / r2;
-		Vector2 unit(dir.x / r, dir.y / r);
-		return unit * forceMag;
-	}
+    void apply_gravity(const Planet& other) {
+        double dx = other.x - x;
+        double dy = other.y - y;
+        double dist_sq = dx*dx + dy*dy;
+        if (dist_sq == 0) return;
 
-	void resetForce() { force.x = 0; force.y = 0; }
-	void addForce(const Vector2& f) { force += f; }
+        double dist = std::sqrt(dist_sq);
+        double force = G * mass * other.mass / dist_sq;
 
-	// Integrate using symplectic (semi-implicit) Euler: update velocity from force, then position
-	void integrate(double dt) {
-		// a = F / m
-		if (mass > 0) {
-			vx += (force.x / mass) * dt;
-			vy += (force.y / mass) * dt;
-			x += vx * dt;
-			y += vy * dt;
-		}
-	}
+        double ax = force * dx / dist / mass;
+        double ay = force * dy / dist / mass;
+
+        vx += ax;
+        vy += ay;
+    }
+
+    void move() {
+        x += vx;
+        y += vy;
+    }
 };
 
 int main() {
-	// Create an N-body system
-	std::vector<Body> bodies;
-	// Example: three bodies
-	bodies.emplace_back(Body(-1.0, 0.0, 1.0, 5.0, 1.0));
-	bodies.emplace_back(Body(0.0, 0.0, 1.0, 10.0, 1.0));
-	bodies.emplace_back(Body(1.0, 0.2, 1.0, 7.5, 1.0));
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+        std::cerr << "SDL Init Error: " << SDL_GetError() << std::endl;
+        return 1;
+    }
 
-	const double dt = 0.01;
-	const int steps = 5000;
+    if (TTF_Init() != 0) {
+        std::cerr << "TTF Init Error: " << TTF_GetError() << std::endl;
+        SDL_Quit();
+        return 1;
+    }
 
-	for (int step = 0; step < steps; ++step) {
-		// reset forces
-		for (auto& b : bodies) b.resetForce();
+    SDL_Window* window = SDL_CreateWindow("Gravity Sim",
+                                          SDL_WINDOWPOS_CENTERED,
+                                          SDL_WINDOWPOS_CENTERED,
+                                          WIDTH, HEIGHT,
+                                          SDL_WINDOW_SHOWN);
+    if (!window) {
+        std::cerr << "Window creation failed: " << SDL_GetError() << std::endl;
+        SDL_Quit();
+        return 1;
+    }
 
-		// compute pairwise forces
-		for (size_t i = 0; i < bodies.size(); ++i) {
-			for (size_t j = i + 1; j < bodies.size(); ++j) {
-				Vector2 f = bodies[i].update(bodies[j]);
-				// force on i by j is +f, on j by i is -f
-				bodies[i].addForce(f);
-				bodies[j].addForce(Vector2(-f.x, -f.y));
-			}
-		}
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer) {
+        std::cerr << "Renderer creation failed: " << SDL_GetError() << std::endl;
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
 
-		// integrate
-		for (auto& b : bodies) b.integrate(dt);
+    TTF_Font* font = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18);
+    if (!font) {
+        std::cerr << "Font load failed: " << TTF_GetError() << std::endl;
+    }
 
-		// print positions every 50 steps
-		if (step % 50 == 0) {
-			std::cout << "Step " << step << "\n";
-			for (size_t i = 0; i < bodies.size(); ++i) {
-				const Body& b = bodies[i];
-				std::cout << "  Body " << i << ": pos=(" << b.x << ", " << b.y << ") vel=(" << b.vx << ", " << b.vy << ")\n";
-			}
-		}
-	}
+    std::vector<Planet> planets = {
+        Planet(0, 0, 696340000, 1.989e30, {255,255,0,255}, "Sun"),
+        Planet(149600000000, 0, 1737000, 5.972e24, {0,100,255,255}, "Earth")
+    };
 
-	return 0;
+    bool running = true;
+    SDL_Event event;
+
+    const int FPS = 60;
+    Uint32 frameDelay = 1000 / FPS;
+
+    while (running) {
+        Uint32 frameStart = SDL_GetTicks();
+
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) running = false;
+        }
+
+        const Uint8* keys = SDL_GetKeyboardState(NULL);
+
+        if (keys[SDL_SCANCODE_A]) offset_x -= 10;
+        if (keys[SDL_SCANCODE_D]) offset_x += 10;
+        if (keys[SDL_SCANCODE_W]) offset_y -= 10;
+        if (keys[SDL_SCANCODE_S]) offset_y += 10;
+        if (keys[SDL_SCANCODE_UP]) sim_scale *= scale_scaling_factor;
+        if (keys[SDL_SCANCODE_DOWN]) sim_scale /= scale_scaling_factor;
+
+        // physics
+        for (int step = 0; step < steps_per_frame; ++step) {
+            for (auto& p : planets) {
+                for (auto& other : planets) {
+                    if (&p != &other) p.apply_gravity(other);
+                }
+            }
+            for (auto& p : planets) p.move();
+        }
+
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+
+        for (auto& planet : planets) {
+            if (planet.title == "Earth") planet.draw(renderer, offset_x, offset_y, 1000);
+            else planet.draw(renderer, offset_x, offset_y, 10);
+        }
+
+        SDL_RenderPresent(renderer);
+
+        Uint32 frameTime = SDL_GetTicks() - frameStart;
+        if (frameDelay > frameTime) SDL_Delay(frameDelay - frameTime);
+    }
+
+    if (font) TTF_CloseFont(font);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    TTF_Quit();
+    SDL_Quit();
+
+    return 0;
 }
-
-
